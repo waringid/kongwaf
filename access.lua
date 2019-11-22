@@ -1,6 +1,7 @@
 local iputils = require "resty.iputils"
 local FORBIDDEN = 403
 local cache = {}
+local kong = kong 
 --args
 local rulematch = ngx.re.find
 local unescape = ngx.unescape_uri
@@ -34,7 +35,7 @@ end
 --Get WAF rule
 local function get_rule(rulefilename)
     local io = require 'io'
-    local RULE_PATH = "/usr/local/share/lua/5.1/kong/plugins/kong-waf"
+    local RULE_PATH = "/usr/local/share/lua/5.1/kong/plugins/kong-waf/wafconf"
     local RULE_FILE = io.open(RULE_PATH..'/'..rulefilename,"r")
     if RULE_FILE == nil then
         return
@@ -48,11 +49,11 @@ local function get_rule(rulefilename)
 end
 
 --WAF log record for json,(use logstash codec => json)
-local function log_record(method,url,data,ruletag)
+local function log_record(method,url,data,ruletag,conf)
     local cjson = require("cjson")
     local io = require 'io'
-    local LOG_PATH = config_log_dir
-    local CLIENT_IP = get_client_ip()
+    local LOG_PATH = conf.log_dir
+    local CLIENT_IP = ngx.var.binary_remote_addr
     local USER_AGENT = get_user_agent()
     local SERVER_NAME = ngx.var.server_name
     local LOCAL_TIME = ngx.localtime()
@@ -80,9 +81,10 @@ end
 --WAF return
 local function waf_output(conf)
     if conf.waf_redirect then
-        ngx.redirect(conf.waf_redirect_url, 301)
+        ngx.redirect("www.baidu.com", 301)
     else
         ngx.header.content_type = "text/html"
+        local binary_remote_addr = ngx.var.binary_remote_addr
         ngx.status = ngx.HTTP_FORBIDDEN
         local config_output_html=[[
             <html xmlns="http://www.w3.org/1999/xhtml"><head>
@@ -111,7 +113,7 @@ local function waf_output(conf)
             </div>
             </body></html>
         ]]       
-        ngx.say(string.format(config_output_html, get_client_ip()))
+        ngx.say(string.format(config_output_html, binary_remote_addr))
         ngx.exit(ngx.status)
     end
 end
@@ -139,12 +141,14 @@ end
 
 --allow white url
 local function white_url_check(conf)
-    local URL_WHITE_RULES = conf.white_url
-    local REQ_URI = ngx.var.request_uri
-    if URL_WHITE_RULES ~= nil then
-        for _,rule in pairs(URL_WHITE_RULES) do
-            if rule ~= "" and rulematch(REQ_URI,rule,"jo") then
-                return true
+    if conf.white_url_check then
+        local URL_WHITE_RULES = get_rule('whiteurl.rule')
+        local REQ_URI = ngx.var.request_uri
+        if URL_WHITE_RULES ~= nil then
+            for _,rule in pairs(URL_WHITE_RULES) do
+                if rule ~= "" and rulematch(REQ_URI,rule,"jo") then
+                    return true
+                end
             end
         end
     end
@@ -158,8 +162,8 @@ local function cookie_attack_check(conf)
         if USER_COOKIE ~= nil then
             for _,rule in pairs(COOKIE_RULES) do
                 if rule ~="" and rulematch(USER_COOKIE,rule,"jo") then
-                    log_record('Deny_Cookie',ngx.var.request_uri,"-",rule)
-                    if config_waf_enable == "on" then
+                    log_record('Deny_Cookie',ngx.var.request_uri,"-",rule,conf)
+                    if conf.waf_enable then
                         waf_output()
                         return true
                     end
@@ -177,8 +181,8 @@ local function url_attack_check(conf)
         local REQ_URI = ngx.var.request_uri
         for _,rule in pairs(URL_RULES) do
             if rule ~="" and rulematch(REQ_URI,rule,"jo") then
-                log_record('Deny_URL',REQ_URI,"-",rule)
-                if config_waf_enable == "on" then
+                log_record('Deny_URL',REQ_URI,"-",rule,conf)
+                if conf.waf_enable then
                     waf_output()
                     return true
                 end
@@ -201,8 +205,8 @@ local function url_args_attack_check(conf)
                     ARGS_DATA = val
                 end
                 if ARGS_DATA and type(ARGS_DATA) ~= "boolean" and rule ~="" and rulematch(unescape(ARGS_DATA),rule,"jo") then
-                    log_record('Deny_URL_Args',ngx.var.request_uri,"-",rule)
-                    if config_waf_enable == "on" then
+                    log_record('Deny_URL_Args',ngx.var.request_uri,"-",rule,conf)
+                    if conf.waf_enable then
                         waf_output()
                         return true
                     end
@@ -221,8 +225,8 @@ local function user_agent_attack_check(conf)
         if USER_AGENT ~= nil then
             for _,rule in pairs(USER_AGENT_RULES) do
                 if rule ~="" and rulematch(USER_AGENT,rule,"jo") then
-                    log_record('Deny_USER_AGENT',ngx.var.request_uri,"-",rule)
-                    if config_waf_enable == "on" then
+                    log_record('Deny_USER_AGENT',ngx.var.request_uri,"-",rule,conf)
+                    if conf.waf_enable then
                         waf_output()
                         return true
                     end
@@ -250,8 +254,8 @@ local function post_attack_check(conf)
                     post_data = v
                 end
                 if rule ~= "" and rulematch(post_data, rule, "jo") then
-                    log_record('Post_Attack', post_data, "-", rule)
-                    if config_waf_enable == "on" then
+                    log_record('Post_Attack', post_data, "-", rule,conf)
+                    if conf.waf_enable  then
                         waf_output()
                         return true
                     end
