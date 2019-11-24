@@ -83,7 +83,7 @@ local function log_record(method,url,data,ruletag,conf)
                  rule_tag = ruletag,
               }
     local LOG_LINE = cjson.encode(log_json_obj)
-    local LOG_NAME = LOG_PATH..'/'..ngx.today().."_waf.log"
+    local LOG_NAME = LOG_PATH..'/'..servername.."_"..ngx.today().."_waf.log"
     local file = io.open(LOG_NAME,"a")
     if file == nil then
         return
