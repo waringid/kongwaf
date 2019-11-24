@@ -23,9 +23,24 @@ local function cidr_cache(cidr_tab)
     return parsed_cidrs
 end
 
+--Get the client IP
+local function get_client_ip()
+   local CLIENT_IP = ngx.req.get_headers()["X_real_ip"]
+    if CLIENT_IP == nil then
+       CLIENT_IP = ngx.req.get_headers()["X_Forwarded_For"]
+    end
+    if CLIENT_IP == nil then
+       CLIENT_IP  = ngx.var.remote_addr
+    end
+    if CLIENT_IP == nil then
+       CLIENT_IP  = "unknown"
+    end
+  return CLIENT_IP
+end
+
 --Get the client user agent
 local function get_user_agent()
-    USER_AGENT = ngx.var.http_user_agent
+    local USER_AGENT = ngx.var.http_user_agent
     if USER_AGENT == nil then
        USER_AGENT = "unknown"
     end
@@ -40,7 +55,7 @@ local function get_rule(rulefilename)
     if RULE_FILE == nil then
         return
     end
-    RULE_TABLE = {}
+    local RULE_TABLE = {}
     for line in RULE_FILE:lines() do
         table.insert(RULE_TABLE,line)
     end
@@ -53,7 +68,7 @@ local function log_record(method,url,data,ruletag,conf)
     local cjson = require("cjson")
     local io = require 'io'
     local LOG_PATH = conf.log_dir
-    local CLIENT_IP = ngx.var.binary_remote_addr
+    local CLIENT_IP = get_client_ip()
     local USER_AGENT = get_user_agent()
     local SERVER_NAME = ngx.var.server_name
     local LOCAL_TIME = ngx.localtime()
@@ -84,7 +99,7 @@ local function waf_output(conf)
         ngx.redirect("www.baidu.com", 301)
     else
         ngx.header.content_type = "text/html"
-        local binary_remote_addr = ngx.var.binary_remote_addr
+        --local binary_remote_addr = ngx.var.binary_remote_addr
         ngx.status = ngx.HTTP_FORBIDDEN
         local config_output_html=[[
             <html xmlns="http://www.w3.org/1999/xhtml"><head>
@@ -107,13 +122,13 @@ local function waf_output(conf)
             <p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">可能原因：您提交的内容包含危险的攻击请求</p>
             <p style=" margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:1; text-indent:0px;">您的IP为: %s</p>
             <ul style="margin-top: 0px; margin-bottom: 0px; margin-left: 0px; margin-right: 0px; -qt-list-indent: 1;"><li style=" margin-top:12px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">1）检查提交内容；</li>
-            <li style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">3）请联系网站管理员；</li></ul>
+            <li style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">2）请联系网站管理员；</li></ul>
                 </div>
               </div>
             </div>
             </body></html>
         ]]       
-        ngx.say(string.format(config_output_html, binary_remote_addr))
+        ngx.say(string.format(config_output_html, get_client_ip()))
         ngx.exit(ngx.status)
     end
 end
@@ -164,7 +179,7 @@ local function cookie_attack_check(conf)
                 if rule ~="" and rulematch(USER_COOKIE,rule,"jo") then
                     log_record('Deny_Cookie',ngx.var.request_uri,"-",rule,conf)
                     if conf.waf_enable then
-                        waf_output()
+                        waf_output(conf)
                         return true
                     end
                 end
@@ -183,7 +198,7 @@ local function url_attack_check(conf)
             if rule ~="" and rulematch(REQ_URI,rule,"jo") then
                 log_record('Deny_URL',REQ_URI,"-",rule,conf)
                 if conf.waf_enable then
-                    waf_output()
+                    waf_output(conf)
                     return true
                 end
             end
@@ -200,14 +215,14 @@ local function url_args_attack_check(conf)
             local REQ_ARGS = ngx.req.get_uri_args()
             for key, val in pairs(REQ_ARGS) do
                 if type(val) == 'table' then
-                    ARGS_DATA = table.concat(val, " ")
+                    local ARGS_DATA = table.concat(val, " ")
                 else
-                    ARGS_DATA = val
+                    local ARGS_DATA = val
                 end
                 if ARGS_DATA and type(ARGS_DATA) ~= "boolean" and rule ~="" and rulematch(unescape(ARGS_DATA),rule,"jo") then
                     log_record('Deny_URL_Args',ngx.var.request_uri,"-",rule,conf)
                     if conf.waf_enable then
-                        waf_output()
+                        waf_output(conf)
                         return true
                     end
                 end
@@ -227,7 +242,7 @@ local function user_agent_attack_check(conf)
                 if rule ~="" and rulematch(USER_AGENT,rule,"jo") then
                     log_record('Deny_USER_AGENT',ngx.var.request_uri,"-",rule,conf)
                     if conf.waf_enable then
-                        waf_output()
+                        waf_output(conf)
                         return true
                     end
                 end
@@ -256,7 +271,7 @@ local function post_attack_check(conf)
                 if rule ~= "" and rulematch(post_data, rule, "jo") then
                     log_record('Post_Attack', post_data, "-", rule,conf)
                     if conf.waf_enable  then
-                        waf_output()
+                        waf_output(conf)
                         return true
                     end
                 end
